@@ -107,7 +107,7 @@
   </div>
 
   <div id="instructions">
-    One hand tracked &nbsp;|&nbsp; Point index + pinky, curl middle + ring &nbsp;→&nbsp; <b>THWIP</b>
+    Both hands tracked &nbsp;|&nbsp; Point index + pinky, curl middle + ring &nbsp;→&nbsp; <b>THWIP</b>
   </div>
 
   <div id="overlay-msg">
@@ -159,7 +159,7 @@ async function init(){
     );
     const modelOpts = {
       runningMode:"VIDEO",
-      numHands:1,
+      numHands:2,
       minHandDetectionConfidence:0.55,
       minHandPresenceConfidence:0.55,
       minTrackingConfidence:0.55
@@ -255,7 +255,7 @@ function aimTarget(start, tip){
 function fireWeb(start, target){
   // cap concurrent effects so a burst of triggers can't overload the canvas
   const activeCount = shots.filter(s=>s.phase!=='dead').length;
-  if(activeCount >= 6) shots.shift();
+  if(activeCount >= 8) shots.shift();
 
   const dist0 = Math.hypot(target.x-start.x, target.y-start.y);
   shots.push({
@@ -288,17 +288,40 @@ function drawShots(now){
       const y = s.start.y + (s.target.y-s.start.y)*t;
 
       ctx.save();
-      // motion streak: a few trailing dots behind the head, fading and shrinking
+
+      // launch glow at the wrist — fades out over the first ~180ms
+      const launchAge = now - s.born;
+      const launchAlpha = Math.max(0, 1 - launchAge/180);
+      if(launchAlpha > 0){
+        const lg = ctx.createRadialGradient(s.start.x, s.start.y, 0, s.start.x, s.start.y, 16);
+        lg.addColorStop(0, `rgba(255,255,255,${(0.85*launchAlpha).toFixed(2)})`);
+        lg.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = lg;
+        ctx.beginPath();
+        ctx.arc(s.start.x, s.start.y, 16, 0, Math.PI*2);
+        ctx.fill();
+      }
+
+      // solid trailing strand connecting wrist to the traveling head
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(s.start.x, s.start.y);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+
+      // motion streak head: a few trailing dots, fading and shrinking
       const steps = 5;
       for(let k=steps;k>=0;k--){
         const tt = Math.max(0, t - k*0.045);
         const px = s.start.x + (s.target.x-s.start.x)*tt;
         const py = s.start.y + (s.target.y-s.start.y)*tt;
-        const a = (1 - k/steps) * 0.9;
-        const r = 5 - k*0.6;
-        ctx.fillStyle = `rgba(244,242,234,${a.toFixed(2)})`;
+        const a = (1 - k/steps) * 0.95;
+        const r = 6.5 - k*0.7;
+        ctx.fillStyle = `rgba(255,255,255,${a.toFixed(2)})`;
         ctx.beginPath();
-        ctx.arc(px, py, Math.max(1, r), 0, Math.PI*2);
+        ctx.arc(px, py, Math.max(1.5, r), 0, Math.PI*2);
         ctx.fill();
       }
       ctx.restore();
@@ -328,7 +351,7 @@ function drawShots(now){
 
       ctx.save();
       ctx.globalAlpha = Math.max(0, alpha);
-      ctx.strokeStyle = '#f4f2ea';
+      ctx.strokeStyle = '#ffffff';
       ctx.lineCap = 'round';
 
       const tips = s.strands.map(st=>({
@@ -336,17 +359,17 @@ function drawShots(now){
         y: s.target.y + Math.sin(st.angle)*st.len*grow
       }));
 
-      // radiating strands — cheap glow via a wide faint pass + thin bright pass
-      ctx.strokeStyle = 'rgba(244,242,234,0.25)';
-      ctx.lineWidth = 4;
+      // radiating strands — thick, bright white, cheap glow via wide faint pass + solid pass
+      ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+      ctx.lineWidth = 7;
       tips.forEach(p=>{
         ctx.beginPath();
         ctx.moveTo(s.target.x, s.target.y);
         ctx.lineTo(p.x, p.y);
         ctx.stroke();
       });
-      ctx.strokeStyle = '#f4f2ea';
-      ctx.lineWidth = 1.4;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2.6;
       tips.forEach(p=>{
         ctx.beginPath();
         ctx.moveTo(s.target.x, s.target.y);
@@ -355,8 +378,8 @@ function drawShots(now){
       });
 
       // connecting rings — slight inward sag between spokes, like real webbing under tension
-      ctx.lineWidth = 1.1;
-      ctx.strokeStyle = 'rgba(244,242,234,0.8)';
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
       [0.4, 0.7, 0.95].forEach(frac=>{
         ctx.beginPath();
         const ringPts = tips.map((p,i)=>({
@@ -380,16 +403,16 @@ function drawShots(now){
       });
 
       // hub — soft radial glow instead of a flat dot
-      const grad = ctx.createRadialGradient(s.target.x, s.target.y, 0, s.target.x, s.target.y, 9);
-      grad.addColorStop(0, 'rgba(244,242,234,0.9)');
-      grad.addColorStop(1, 'rgba(244,242,234,0)');
+      const grad = ctx.createRadialGradient(s.target.x, s.target.y, 0, s.target.x, s.target.y, 12);
+      grad.addColorStop(0, 'rgba(255,255,255,0.95)');
+      grad.addColorStop(1, 'rgba(255,255,255,0)');
       ctx.fillStyle = grad;
       ctx.beginPath();
-      ctx.arc(s.target.x, s.target.y, 9, 0, Math.PI*2);
+      ctx.arc(s.target.x, s.target.y, 12, 0, Math.PI*2);
       ctx.fill();
-      ctx.fillStyle = '#f4f2ea';
+      ctx.fillStyle = '#ffffff';
       ctx.beginPath();
-      ctx.arc(s.target.x, s.target.y, 3.5, 0, Math.PI*2);
+      ctx.arc(s.target.x, s.target.y, 4.5, 0, Math.PI*2);
       ctx.fill();
 
       ctx.restore();
@@ -402,7 +425,7 @@ function drawShots(now){
 // ---------- main loop ----------
 let frameCount = 0, fpsTimer = performance.now(), fps = 0;
 let lastDetectTime = 0;
-const DETECT_INTERVAL_MS = 90; // ~11 detections/sec — single-hand tracking, tuned for low-end mobile
+const DETECT_INTERVAL_MS = 100; // ~10 detections/sec — tracking 2 hands again, tuned for low-end mobile
 let detecting = false;
 
 function loop(now){
