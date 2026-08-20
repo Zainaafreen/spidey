@@ -55,6 +55,12 @@
     font-family:'Orbitron', sans-serif; font-weight:900; font-size:13px;
     letter-spacing:2px; color:var(--accent);
   }
+  #status .title-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  #mute-btn{
+    background:transparent; border:1px solid rgba(224,34,47,0.4); color:var(--web);
+    font-size:13px; line-height:1; padding:4px 7px; cursor:pointer; border-radius:2px;
+  }
+  #mute-btn:hover{ border-color:var(--accent); }
   #status .row{ font-size:11px; color:var(--dim); margin-top:6px; display:flex; justify-content:space-between; letter-spacing:1px;}
   #status .row span.val{ color:var(--web); }
   #status .row span.val.on{ color:var(--ok); }
@@ -99,7 +105,10 @@
   <div class="bracket br"></div>
 
   <div id="status">
-    <div class="title">WEB-SHOOTER RIG</div>
+    <div class="title-row">
+      <div class="title">WEB-SHOOTER RIG</div>
+      <button id="mute-btn" title="Toggle sound">🔊</button>
+    </div>
     <div class="row"><span>MODEL</span><span class="val" id="s-model">LOADING</span></div>
     <div class="row"><span>HANDS TRACKED</span><span class="val" id="s-hands">0</span></div>
     <div class="row"><span>GESTURE</span><span class="val" id="s-gesture">—</span></div>
@@ -146,6 +155,89 @@ const handState = {
 };
 
 let shots = []; // active projectile / splat effects
+
+// ---------- audio (fully synthesized — no external sound files) ----------
+let audioCtx = null;
+let noiseBuffer = null;
+let muted = false;
+const muteBtn = document.getElementById('mute-btn');
+
+function initAudio(){
+  if(audioCtx) return;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const dur = 0.3;
+  const bufferSize = Math.floor(audioCtx.sampleRate * dur);
+  noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = noiseBuffer.getChannelData(0);
+  for(let i=0;i<bufferSize;i++) data[i] = Math.random()*2 - 1;
+}
+
+muteBtn.addEventListener('click', ()=>{
+  muted = !muted;
+  muteBtn.textContent = muted ? '🔇' : '🔊';
+});
+
+function playThwip(){
+  if(!audioCtx || muted) return;
+  const t0 = audioCtx.currentTime;
+
+  // whoosh — filtered noise burst sweeping downward
+  const noiseSrc = audioCtx.createBufferSource();
+  noiseSrc.buffer = noiseBuffer;
+  const noiseFilter = audioCtx.createBiquadFilter();
+  noiseFilter.type = 'bandpass';
+  noiseFilter.Q.value = 0.7;
+  noiseFilter.frequency.setValueAtTime(2600, t0);
+  noiseFilter.frequency.exponentialRampToValueAtTime(600, t0 + 0.09);
+  const noiseGain = audioCtx.createGain();
+  noiseGain.gain.setValueAtTime(0.32, t0);
+  noiseGain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.11);
+  noiseSrc.connect(noiseFilter).connect(noiseGain).connect(audioCtx.destination);
+  noiseSrc.start(t0);
+  noiseSrc.stop(t0 + 0.12);
+
+  // zip — quick pitch-descending tone for the "snap"
+  const osc = audioCtx.createOscillator();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(1900, t0);
+  osc.frequency.exponentialRampToValueAtTime(260, t0 + 0.1);
+  const oscGain = audioCtx.createGain();
+  oscGain.gain.setValueAtTime(0.16, t0);
+  oscGain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.12);
+  osc.connect(oscGain).connect(audioCtx.destination);
+  osc.start(t0);
+  osc.stop(t0 + 0.13);
+}
+
+function playStick(){
+  if(!audioCtx || muted) return;
+  const t0 = audioCtx.currentTime;
+
+  // low thump
+  const osc = audioCtx.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(180, t0);
+  osc.frequency.exponentialRampToValueAtTime(65, t0 + 0.08);
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(0.28, t0);
+  gain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.1);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start(t0);
+  osc.stop(t0 + 0.11);
+
+  // tiny click for texture
+  const noiseSrc = audioCtx.createBufferSource();
+  noiseSrc.buffer = noiseBuffer;
+  const noiseFilter = audioCtx.createBiquadFilter();
+  noiseFilter.type = 'lowpass';
+  noiseFilter.frequency.value = 1200;
+  const noiseGain = audioCtx.createGain();
+  noiseGain.gain.setValueAtTime(0.14, t0);
+  noiseGain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.05);
+  noiseSrc.connect(noiseFilter).connect(noiseGain).connect(audioCtx.destination);
+  noiseSrc.start(t0);
+  noiseSrc.stop(t0 + 0.06);
+}
 
 // object-fit:cover crops + scales the video to fill the screen — we need to
 // replicate that exact mapping, or landmark coordinates drift from what's
