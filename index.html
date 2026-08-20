@@ -237,16 +237,19 @@ function toScreen(lm){
   };
 }
 
-function rayToEdge(start, through){
-  const dx = through.x - start.x;
-  const dy = through.y - start.y;
-  let t = Infinity;
-  if (dx > 0) t = Math.min(t, (canvas.width - start.x) / dx);
-  if (dx < 0) t = Math.min(t, (0 - start.x) / dx);
-  if (dy > 0) t = Math.min(t, (canvas.height - start.y) / dy);
-  if (dy < 0) t = Math.min(t, (0 - start.y) / dy);
-  if (!isFinite(t) || t <= 0) t = 400;
-  return { x: start.x + dx * t, y: start.y + dy * t };
+function aimTarget(start, tip){
+  const dx = tip.x - start.x, dy = tip.y - start.y;
+  const mag = Math.hypot(dx, dy) || 1;
+  const ux = dx / mag, uy = dy / mag;
+  const reach = Math.min(canvas.width, canvas.height) * 0.65;
+
+  let x = tip.x + ux * reach;
+  let y = tip.y + uy * reach;
+
+  const margin = 60;
+  x = Math.max(margin, Math.min(canvas.width - margin, x));
+  y = Math.max(margin, Math.min(canvas.height - margin, y));
+  return { x, y };
 }
 
 function fireWeb(start, target){
@@ -451,7 +454,7 @@ function processResult(result, now){
       state.cooldownUntil = now + 320;
       const wristPt = toScreen(lm[0]);
       const tipPt = toScreen(lm[8]);
-      const target = rayToEdge(wristPt, tipPt);
+      const target = aimTarget(wristPt, tipPt);
       fireWeb(wristPt, target);
     }
   });
