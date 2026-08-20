@@ -296,6 +296,10 @@ startBtn.addEventListener('click', async ()=>{
   startBtn.disabled = true;
   startBtn.textContent = "LOADING...";
   try{
+    // Must happen on a user gesture (this click) or the browser's
+    // autoplay policy will keep the AudioContext suspended forever.
+    initAudio();
+    if(audioCtx.state === 'suspended') await audioCtx.resume();
     await init();
     const stream = await navigator.mediaDevices.getUserMedia({
       video:{ width:{ideal:480}, height:{ideal:360}, facingMode:"user" }
@@ -359,6 +363,8 @@ function aimTarget(start, tip){
 }
 
 function fireWeb(start, target){
+  playThwip();
+
   // cap concurrent effects so a burst of triggers can't overload the canvas
   const activeCount = shots.filter(s=>s.phase!=='dead').length;
   if(activeCount >= 8) shots.shift();
@@ -436,6 +442,7 @@ function drawShots(now){
         s.phase = 'splat';
         s.splatBorn = now;
         s.strands = buildSplat(s.target);
+        playStick();
       }
       return true;
     }
