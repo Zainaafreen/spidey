@@ -103,11 +103,12 @@
     <div class="row"><span>MODEL</span><span class="val" id="s-model">LOADING</span></div>
     <div class="row"><span>HANDS TRACKED</span><span class="val" id="s-hands">0</span></div>
     <div class="row"><span>GESTURE</span><span class="val" id="s-gesture">—</span></div>
+    <div class="row"><span>INFER MS</span><span class="val" id="s-infer">0</span></div>
     <div class="row"><span>FPS</span><span class="val" id="s-fps">0</span></div>
   </div>
 
   <div id="instructions">
-    Both hands tracked &nbsp;|&nbsp; Point index + pinky, curl middle + ring &nbsp;→&nbsp; <b>THWIP</b>
+    One hand tracked &nbsp;|&nbsp; Point index + pinky, curl middle + ring &nbsp;→&nbsp; <b>THWIP</b>
   </div>
 
   <div id="overlay-msg">
@@ -131,6 +132,7 @@ const errMsg = document.getElementById('err-msg');
 const sModel = document.getElementById('s-model');
 const sHands = document.getElementById('s-hands');
 const sGesture = document.getElementById('s-gesture');
+const sInfer = document.getElementById('s-infer');
 const sFps = document.getElementById('s-fps');
 
 let handLandmarker = null;
@@ -145,9 +147,24 @@ const handState = {
 
 let shots = []; // active projectile / splat effects
 
+// object-fit:cover crops + scales the video to fill the screen — we need to
+// replicate that exact mapping, or landmark coordinates drift from what's
+// actually on screen (this was the source of the "wrong direction" aiming).
+let videoW = 0, videoH = 0, coverScale = 1, coverOffsetX = 0, coverOffsetY = 0;
+
+function updateCoverMapping(){
+  if(!video.videoWidth || !video.videoHeight) return;
+  videoW = video.videoWidth;
+  videoH = video.videoHeight;
+  coverScale = Math.max(canvas.width / videoW, canvas.height / videoH);
+  coverOffsetX = (videoW * coverScale - canvas.width) / 2;
+  coverOffsetY = (videoH * coverScale - canvas.height) / 2;
+}
+
 function resizeCanvas(){
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
+  updateCoverMapping();
 }
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
@@ -159,29 +176,21 @@ async function init(){
     );
     const modelOpts = {
       runningMode:"VIDEO",
-      numHands:2,
+      numHands:1,
       minHandDetectionConfidence:0.55,
       minHandPresenceConfidence:0.55,
       minTrackingConfidence:0.55
     };
-    try{
-      handLandmarker = await HandLandmarker.createFromOptions(fileset, {
-        baseOptions:{
-          modelAssetPath:"https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
-          delegate:"GPU"
-        },
-        ...modelOpts
-      });
-    }catch(gpuErr){
-      console.warn("GPU delegate failed, falling back to CPU", gpuErr);
-      handLandmarker = await HandLandmarker.createFromOptions(fileset, {
-        baseOptions:{
-          modelAssetPath:"https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
-          delegate:"CPU"
-        },
-        ...modelOpts
-      });
-    }
+    // CPU delegate only: the GPU/WebGL delegate is known to hang for multiple
+    // seconds on some Android + Chrome driver combos, which is almost
+    // certainly what's causing the multi-second lag.
+    handLandmarker = await HandLandmarker.createFromOptions(fileset, {
+      baseOptions:{
+        modelAssetPath:"https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+        delegate:"CPU"
+      },
+      ...modelOpts
+    });
     sModel.textContent = "READY";
     sModel.classList.add('on');
   }catch(e){
@@ -197,11 +206,12 @@ startBtn.addEventListener('click', async ()=>{
   try{
     await init();
     const stream = await navigator.mediaDevices.getUserMedia({
-      video:{ width:{ideal:480}, height:{ideal:360}, facingMode:"user" }
+      video:{ width:{ideal:320}, height:{ideal:240}, facingMode:"user" }
     });
     video.srcObject = stream;
     await new Promise(res => { video.onloadedmetadata = res; });
     video.play();
+    updateCoverMapping();
     overlay.classList.add('hidden');
     running = true;
     requestAnimationFrame(loop);
@@ -230,10 +240,14 @@ function detectWebGesture(lm){
 }
 
 function toScreen(lm){
-  // mirror x to match the mirrored video
+  // map normalized landmark -> raw video pixel -> displayed (post-cover-crop) pixel -> mirrored screen pixel
+  const rawX = lm.x * videoW;
+  const rawY = lm.y * videoH;
+  const dispX = rawX * coverScale - coverOffsetX;
+  const dispY = rawY * coverScale - coverOffsetY;
   return {
-    x: canvas.width - (lm.x * canvas.width),
-    y: lm.y * canvas.height
+    x: canvas.width - dispX, // mirror to match the CSS-mirrored video
+    y: dispY
   };
 }
 
@@ -425,7 +439,7 @@ function drawShots(now){
 // ---------- main loop ----------
 let frameCount = 0, fpsTimer = performance.now(), fps = 0;
 let lastDetectTime = 0;
-const DETECT_INTERVAL_MS = 100; // ~10 detections/sec — tracking 2 hands again, tuned for low-end mobile
+const DETECT_INTERVAL_MS = 60; // ~16 detections/sec — tighter loop now that shadowBlur/filter/res costs are gone
 let detecting = false;
 
 function loop(now){
@@ -437,7 +451,9 @@ function loop(now){
     lastDetectTime = now;
     lastVideoTime = video.currentTime;
     detecting = true;
+    const t0 = performance.now();
     const result = handLandmarker.detectForVideo(video, now);
+    sInfer.textContent = Math.round(performance.now() - t0);
     processResult(result, now);
     detecting = false;
   }
