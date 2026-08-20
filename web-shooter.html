@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WEB-SHOOTER // gesture rig</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --void:#08080a;
+    --panel:rgba(14,14,17,0.72);
+    --accent:#e0222f;
+    --web:#f4f2ea;
+    --dim:#7c7c86;
+    --ok:#35d488;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{
+    width:100%; height:100%; background:var(--void); overflow:hidden;
+    font-family:'JetBrains Mono', monospace; color:var(--web);
+  }
+  #stage{
+    position:relative; width:100vw; height:100vh; overflow:hidden;
+  }
+  #cam{
+    position:absolute; inset:0; width:100%; height:100%;
+    object-fit:cover; transform:scaleX(-1);
+    filter:contrast(1.05) saturate(0.9) brightness(0.92);
+  }
+  #veil{
+    position:absolute; inset:0;
+    background:radial-gradient(ellipse at center, rgba(0,0,0,0) 45%, rgba(0,0,0,0.55) 100%);
+    pointer-events:none;
+  }
+  #fx{
+    position:absolute; inset:0; width:100%; height:100%; pointer-events:none;
+  }
+
+  /* HUD corner brackets */
+  .bracket{ position:absolute; width:34px; height:34px; border:2px solid var(--accent); opacity:0.85; pointer-events:none; }
+  .bracket.tl{ top:18px; left:18px; border-right:none; border-bottom:none; }
+  .bracket.tr{ top:18px; right:18px; border-left:none; border-bottom:none; }
+  .bracket.bl{ bottom:18px; left:18px; border-right:none; border-top:none; }
+  .bracket.br{ bottom:18px; right:18px; border-left:none; border-top:none; }
+
+  #status{
+    position:absolute; top:28px; left:64px;
+    background:var(--panel); backdrop-filter:blur(6px);
+    border:1px solid rgba(224,34,47,0.35);
+    padding:10px 16px; min-width:230px;
+  }
+  #status .title{
+    font-family:'Orbitron', sans-serif; font-weight:900; font-size:13px;
+    letter-spacing:2px; color:var(--accent);
+  }
+  #status .row{ font-size:11px; color:var(--dim); margin-top:6px; display:flex; justify-content:space-between; letter-spacing:1px;}
+  #status .row span.val{ color:var(--web); }
+  #status .row span.val.on{ color:var(--ok); }
+
+  #instructions{
+    position:absolute; bottom:26px; left:50%; transform:translateX(-50%);
+    background:var(--panel); backdrop-filter:blur(6px);
+    border:1px solid rgba(244,242,234,0.15);
+    padding:10px 22px; font-size:11px; letter-spacing:1.5px; color:var(--dim);
+    text-align:center; white-space:nowrap;
+  }
+  #instructions b{ color:var(--web); font-weight:700; }
+
+  #overlay-msg{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    background:var(--void); flex-direction:column; gap:14px; text-align:center; padding:40px;
+    z-index:5;
+  }
+  #overlay-msg h1{
+    font-family:'Orbitron', sans-serif; font-weight:900; font-size:22px; letter-spacing:3px; color:var(--accent);
+  }
+  #overlay-msg p{ font-size:12.5px; color:var(--dim); max-width:440px; line-height:1.6; letter-spacing:0.5px;}
+  #overlay-msg button{
+    margin-top:10px; font-family:'Orbitron', sans-serif; font-weight:700; letter-spacing:2px;
+    background:var(--accent); color:var(--void); border:none; padding:12px 26px; font-size:12px;
+    cursor:pointer;
+  }
+  #overlay-msg button:hover{ filter:brightness(1.15); }
+  .hidden{ display:none !important; }
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <video id="cam" autoplay playsinline muted></video>
+  <div id="veil"></div>
+  <canvas id="fx"></canvas>
+
+  <div class="bracket tl"></div>
+  <div class="bracket tr"></div>
+  <div class="bracket bl"></div>
+  <div class="bracket br"></div>
+
+  <div id="status">
+    <div class="title">WEB-SHOOTER RIG</div>
+    <div class="row"><span>MODEL</span><span class="val" id="s-model">LOADING</span></div>
+    <div class="row"><span>HANDS TRACKED</span><span class="val" id="s-hands">0</span></div>
+    <div class="row"><span>GESTURE</span><span class="val" id="s-gesture">—</span></div>
+    <div class="row"><span>FPS</span><span class="val" id="s-fps">0</span></div>
+  </div>
+
+  <div id="instructions">
+    Point index + pinky, curl middle + ring &nbsp;→&nbsp; <b>THWIP</b> &nbsp;|&nbsp; aim decides trajectory
+  </div>
+
+  <div id="overlay-msg">
+    <h1>WEB-SHOOTER RIG</h1>
+    <p>Needs camera access to track your hand. Runs entirely in your browser — nothing is uploaded anywhere. Works best in Chrome or Edge, in good light, hand held roughly 1–2 feet from the camera.</p>
+    <button id="start-btn">ENABLE CAMERA</button>
+    <p id="err-msg" style="color:var(--accent); display:none;"></p>
+  </div>
+</div>
+
+<script type="module">
+import { HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+
+const video = document.getElementById('cam');
+const canvas = document.getElementById('fx');
+const ctx = canvas.getContext('2d');
+const overlay = document.getElementById('overlay-msg');
+const startBtn = document.getElementById('start-btn');
+const errMsg = document.getElementById('err-msg');
+
+const sModel = document.getElementById('s-model');
+const sHands = document.getElementById('s-hands');
+const sGesture = document.getElementById('s-gesture');
+const sFps = document.getElementById('s-fps');
+
+let handLandmarker = null;
+let running = false;
+let lastVideoTime = -1;
+
+// per-hand trigger state, keyed by handedness label ("Left"/"Right")
+const handState = {
+  Left:  { wasGesture:false, cooldownUntil:0 },
+  Right: { wasGesture:false, cooldownUntil:0 },
+};
+
+let shots = []; // active projectile / splat effects
+
+function resizeCanvas(){
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+async function init(){
+  try{
+    const fileset = await FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+    );
+    handLandmarker = await HandLandmarker.createFromOptions(fileset, {
+      baseOptions:{
+        modelAssetPath:"https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+        delegate:"GPU"
+      },
+      runningMode:"VIDEO",
+      numHands:2,
+      minHandDetectionConfidence:0.55,
+      minHandPresenceConfidence:0.55,
+      minTrackingConfidence:0.55
+    });
+    sModel.textContent = "READY";
+    sModel.classList.add('on');
+  }catch(e){
+    console.error(e);
+    sModel.textContent = "FAILED";
+    throw e;
+  }
+}
+
+startBtn.addEventListener('click', async ()=>{
+  startBtn.disabled = true;
+  startBtn.textContent = "LOADING...";
+  try{
+    await init();
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video:{ width:{ideal:1280}, height:{ideal:720}, facingMode:"user" }
+    });
+    video.srcObject = stream;
+    await new Promise(res => { video.onloadedmetadata = res; });
+    video.play();
+    overlay.classList.add('hidden');
+    running = true;
+    requestAnimationFrame(loop);
+  }catch(e){
+    console.error(e);
+    errMsg.style.display = 'block';
+    errMsg.textContent = "Couldn't start: " + (e.message || e);
+    startBtn.disabled = false;
+    startBtn.textContent = "TRY AGAIN";
+  }
+});
+
+// ---------- geometry helpers ----------
+function dist(a,b){ return Math.hypot(a.x-b.x, a.y-b.y); }
+
+function fingerExtension(lm, tip, pip, wrist){
+  return dist(lm[wrist], lm[tip]) / (dist(lm[wrist], lm[pip]) + 1e-6);
+}
+
+function detectWebGesture(lm){
+  const idx   = fingerExtension(lm, 8, 6, 0);
+  const mid   = fingerExtension(lm, 12, 10, 0);
+  const ring  = fingerExtension(lm, 16, 14, 0);
+  const pinky = fingerExtension(lm, 20, 18, 0);
+  return (idx > 1.2 && pinky > 1.2 && mid < 1.05 && ring < 1.05);
+}
+
+function toScreen(lm){
+  // mirror x to match the mirrored video
+  return {
+    x: canvas.width - (lm.x * canvas.width),
+    y: lm.y * canvas.height
+  };
+}
+
+function rayToEdge(start, through){
+  const dx = through.x - start.x;
+  const dy = through.y - start.y;
+  let t = Infinity;
+  if (dx > 0) t = Math.min(t, (canvas.width - start.x) / dx);
+  if (dx < 0) t = Math.min(t, (0 - start.x) / dx);
+  if (dy > 0) t = Math.min(t, (canvas.height - start.y) / dy);
+  if (dy < 0) t = Math.min(t, (0 - start.y) / dy);
+  if (!isFinite(t) || t <= 0) t = 400;
+  return { x: start.x + dx * t, y: start.y + dy * t };
+}
+
+function fireWeb(start, target){
+  const dist0 = Math.hypot(target.x-start.x, target.y-start.y);
+  shots.push({
+    phase:'travel',
+    start, target,
+    born: performance.now(),
+    travelMs: Math.min(260, Math.max(90, dist0 / 3.4)),
+    strands: null
+  });
+}
+
+function buildSplat(center){
+  const n = 9 + Math.floor(Math.random()*3);
+  const strands = [];
+  for(let i=0;i<n;i++){
+    const angle = (Math.PI*2*i/n) + (Math.random()-0.5)*0.35;
+    const len = 55 + Math.random()*70;
+    strands.push({ angle, len });
+  }
+  return strands;
+}
+
+// ---------- render ----------
+function drawShots(now){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  shots = shots.filter(s=>{
+    if(s.phase==='travel'){
+      const t = Math.min(1, (now - s.born)/s.travelMs);
+      const x = s.start.x + (s.target.x-s.start.x)*t;
+      const y = s.start.y + (s.target.y-s.start.y)*t;
+
+      ctx.save();
+      ctx.strokeStyle = 'rgba(244,242,234,0.55)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(s.start.x, s.start.y);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+
+      ctx.fillStyle = '#f4f2ea';
+      ctx.shadowColor = '#f4f2ea';
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.arc(x, y, 4.5, 0, Math.PI*2);
+      ctx.fill();
+      ctx.restore();
+
+      if(t >= 1){
+        s.phase = 'splat';
+        s.splatBorn = now;
+        s.strands = buildSplat(s.target);
+      }
+      return true;
+    }
+
+    if(s.phase==='splat'){
+      const age = now - s.splatBorn;
+      const growMs = 220;
+      const holdMs = 900;
+      const fadeMs = 1100;
+      const total = growMs + holdMs + fadeMs;
+      if(age > total) return false;
+
+      let grow = Math.min(1, age/growMs);
+      grow = 1 - Math.pow(1-grow, 3); // ease-out
+      let alpha = 1;
+      if(age > growMs+holdMs){
+        alpha = 1 - (age - growMs - holdMs)/fadeMs;
+      }
+
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, alpha);
+      ctx.strokeStyle = '#f4f2ea';
+      ctx.lineCap = 'round';
+
+      const tips = s.strands.map(st=>({
+        x: s.target.x + Math.cos(st.angle)*st.len*grow,
+        y: s.target.y + Math.sin(st.angle)*st.len*grow
+      }));
+
+      // radiating strands
+      ctx.lineWidth = 1.6;
+      ctx.shadowColor = '#f4f2ea';
+      ctx.shadowBlur = 5;
+      tips.forEach(p=>{
+        ctx.beginPath();
+        ctx.moveTo(s.target.x, s.target.y);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+      });
+
+      // connecting web rings at two radii
+      ctx.lineWidth = 1.1;
+      ctx.shadowBlur = 2;
+      [0.45, 0.85].forEach(frac=>{
+        ctx.beginPath();
+        tips.forEach((st,i)=>{
+          const rp = {
+            x: s.target.x + Math.cos(s.strands[i].angle)*s.strands[i].len*grow*frac,
+            y: s.target.y + Math.sin(s.strands[i].angle)*s.strands[i].len*grow*frac
+          };
+          if(i===0) ctx.moveTo(rp.x, rp.y); else ctx.lineTo(rp.x, rp.y);
+        });
+        ctx.closePath();
+        ctx.stroke();
+      });
+
+      // hub
+      ctx.fillStyle = '#f4f2ea';
+      ctx.beginPath();
+      ctx.arc(s.target.x, s.target.y, 4, 0, Math.PI*2);
+      ctx.fill();
+
+      ctx.restore();
+      return true;
+    }
+    return false;
+  });
+}
+
+// ---------- main loop ----------
+let frameCount = 0, fpsTimer = performance.now(), fps = 0;
+
+function loop(now){
+  if(!running) return;
+
+  if(video.currentTime !== lastVideoTime){
+    lastVideoTime = video.currentTime;
+    const result = handLandmarker.detectForVideo(video, now);
+    processResult(result, now);
+  } else {
+    drawShots(now);
+  }
+
+  frameCount++;
+  if(now - fpsTimer > 500){
+    fps = Math.round(frameCount / ((now-fpsTimer)/1000));
+    fpsTimer = now; frameCount = 0;
+    sFps.textContent = fps;
+  }
+
+  requestAnimationFrame(loop);
+}
+
+function processResult(result, now){
+  const hands = result.landmarks || [];
+  const handednesses = result.handednesses || [];
+  sHands.textContent = hands.length;
+
+  let anyGesture = false;
+
+  hands.forEach((lm, i)=>{
+    const label = handednesses[i] && handednesses[i][0] ? handednesses[i][0].categoryName : (i===0?'Right':'Left');
+    const state = handState[label] || (handState[label] = { wasGesture:false, cooldownUntil:0 });
+
+    const isGesture = detectWebGesture(lm);
+    if(isGesture) anyGesture = true;
+
+    const risingEdge = isGesture && !state.wasGesture && now > state.cooldownUntil;
+    state.wasGesture = isGesture;
+
+    if(risingEdge){
+      state.cooldownUntil = now + 550;
+      const wristPt = toScreen(lm[0]);
+      const tipPt = toScreen(lm[8]);
+      const target = rayToEdge(wristPt, tipPt);
+      fireWeb(wristPt, target);
+    }
+  });
+
+  sGesture.textContent = anyGesture ? "LOCKED" : "—";
+  sGesture.classList.toggle('on', anyGesture);
+
+  drawShots(now);
+}
+</script>
+</body>
+</html>
