@@ -447,15 +447,21 @@ function loop(now){
 
   // Detection runs on its own throttled cadence so it never has to
   // happen every single paint — this is what keeps rendering smooth.
-  if(!detecting && now - lastDetectTime >= DETECT_INTERVAL_MS && video.currentTime !== lastVideoTime){
+  if(!detecting && handLandmarker && video.readyState >= 2 && now - lastDetectTime >= DETECT_INTERVAL_MS && video.currentTime !== lastVideoTime){
     lastDetectTime = now;
     lastVideoTime = video.currentTime;
     detecting = true;
-    const t0 = performance.now();
-    const result = handLandmarker.detectForVideo(video, now);
-    sInfer.textContent = Math.round(performance.now() - t0);
-    processResult(result, now);
-    detecting = false;
+    try{
+      const t0 = performance.now();
+      const result = handLandmarker.detectForVideo(video, now);
+      sInfer.textContent = Math.round(performance.now() - t0);
+      processResult(result, now);
+    }catch(err){
+      console.error('detectForVideo failed:', err);
+      sInfer.textContent = 'ERR';
+    }finally{
+      detecting = false;
+    }
   }
 
   // Splat/projectile animation always redraws every frame,
