@@ -206,7 +206,7 @@ startBtn.addEventListener('click', async ()=>{
   try{
     await init();
     const stream = await navigator.mediaDevices.getUserMedia({
-      video:{ width:{ideal:320}, height:{ideal:240}, facingMode:"user" }
+      video:{ width:{ideal:480}, height:{ideal:360}, facingMode:"user" }
     });
     video.srcObject = stream;
     await new Promise(res => { video.onloadedmetadata = res; });
@@ -236,7 +236,7 @@ function detectWebGesture(lm){
   const mid   = fingerExtension(lm, 12, 10, 0);
   const ring  = fingerExtension(lm, 16, 14, 0);
   const pinky = fingerExtension(lm, 20, 18, 0);
-  return (idx > 1.2 && pinky > 1.2 && mid < 1.05 && ring < 1.05);
+  return (idx > 1.13 && pinky > 1.13 && mid < 1.1 && ring < 1.1);
 }
 
 function toScreen(lm){
@@ -498,9 +498,10 @@ function processResult(result, now){
     if(risingEdge){
       state.cooldownUntil = now + 320;
       const wristPt = toScreen(lm[0]);
+      const basePt = toScreen(lm[5]);  // index MCP — true finger axis, not wrist
       const tipPt = toScreen(lm[8]);
-      const target = aimTarget(wristPt, tipPt);
-      fireWeb(wristPt, target);
+      const target = aimTarget(basePt, tipPt);
+      fireWeb(wristPt, target); // still launches visually from the wrist
     }
   });
 
