@@ -27,7 +27,7 @@
   #cam{
     position:absolute; inset:0; width:100%; height:100%;
     object-fit:cover; transform:scaleX(-1);
-    filter:contrast(1.05) saturate(0.9) brightness(0.92);
+    filter:brightness(0.94);
   }
   #veil{
     position:absolute; inset:0;
@@ -107,7 +107,7 @@
   </div>
 
   <div id="instructions">
-    Point index + pinky, curl middle + ring &nbsp;→&nbsp; <b>THWIP</b> &nbsp;|&nbsp; aim decides trajectory
+    One hand tracked &nbsp;|&nbsp; Point index + pinky, curl middle + ring &nbsp;→&nbsp; <b>THWIP</b>
   </div>
 
   <div id="overlay-msg">
@@ -157,17 +157,31 @@ async function init(){
     const fileset = await FilesetResolver.forVisionTasks(
       "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
     );
-    handLandmarker = await HandLandmarker.createFromOptions(fileset, {
-      baseOptions:{
-        modelAssetPath:"https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
-        delegate:"GPU"
-      },
+    const modelOpts = {
       runningMode:"VIDEO",
-      numHands:2,
+      numHands:1,
       minHandDetectionConfidence:0.55,
       minHandPresenceConfidence:0.55,
       minTrackingConfidence:0.55
-    });
+    };
+    try{
+      handLandmarker = await HandLandmarker.createFromOptions(fileset, {
+        baseOptions:{
+          modelAssetPath:"https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+          delegate:"GPU"
+        },
+        ...modelOpts
+      });
+    }catch(gpuErr){
+      console.warn("GPU delegate failed, falling back to CPU", gpuErr);
+      handLandmarker = await HandLandmarker.createFromOptions(fileset, {
+        baseOptions:{
+          modelAssetPath:"https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+          delegate:"CPU"
+        },
+        ...modelOpts
+      });
+    }
     sModel.textContent = "READY";
     sModel.classList.add('on');
   }catch(e){
@@ -183,7 +197,7 @@ startBtn.addEventListener('click', async ()=>{
   try{
     await init();
     const stream = await navigator.mediaDevices.getUserMedia({
-      video:{ width:{ideal:1280}, height:{ideal:720}, facingMode:"user" }
+      video:{ width:{ideal:480}, height:{ideal:360}, facingMode:"user" }
     });
     video.srcObject = stream;
     await new Promise(res => { video.onloadedmetadata = res; });
@@ -236,22 +250,26 @@ function rayToEdge(start, through){
 }
 
 function fireWeb(start, target){
+  // cap concurrent effects so a burst of triggers can't overload the canvas
+  const activeCount = shots.filter(s=>s.phase!=='dead').length;
+  if(activeCount >= 6) shots.shift();
+
   const dist0 = Math.hypot(target.x-start.x, target.y-start.y);
   shots.push({
     phase:'travel',
     start, target,
     born: performance.now(),
-    travelMs: Math.min(260, Math.max(90, dist0 / 3.4)),
+    travelMs: Math.min(220, Math.max(80, dist0 / 4.2)),
     strands: null
   });
 }
 
 function buildSplat(center){
-  const n = 9 + Math.floor(Math.random()*3);
+  const n = 12 + Math.floor(Math.random()*3);
   const strands = [];
   for(let i=0;i<n;i++){
-    const angle = (Math.PI*2*i/n) + (Math.random()-0.5)*0.35;
-    const len = 55 + Math.random()*70;
+    const angle = (Math.PI*2*i/n) + (Math.random()-0.5)*0.22;
+    const len = 70 + Math.random()*85;
     strands.push({ angle, len });
   }
   return strands;
@@ -267,19 +285,19 @@ function drawShots(now){
       const y = s.start.y + (s.target.y-s.start.y)*t;
 
       ctx.save();
-      ctx.strokeStyle = 'rgba(244,242,234,0.55)';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(s.start.x, s.start.y);
-      ctx.lineTo(x, y);
-      ctx.stroke();
-
-      ctx.fillStyle = '#f4f2ea';
-      ctx.shadowColor = '#f4f2ea';
-      ctx.shadowBlur = 12;
-      ctx.beginPath();
-      ctx.arc(x, y, 4.5, 0, Math.PI*2);
-      ctx.fill();
+      // motion streak: a few trailing dots behind the head, fading and shrinking
+      const steps = 5;
+      for(let k=steps;k>=0;k--){
+        const tt = Math.max(0, t - k*0.045);
+        const px = s.start.x + (s.target.x-s.start.x)*tt;
+        const py = s.start.y + (s.target.y-s.start.y)*tt;
+        const a = (1 - k/steps) * 0.9;
+        const r = 5 - k*0.6;
+        ctx.fillStyle = `rgba(244,242,234,${a.toFixed(2)})`;
+        ctx.beginPath();
+        ctx.arc(px, py, Math.max(1, r), 0, Math.PI*2);
+        ctx.fill();
+      }
       ctx.restore();
 
       if(t >= 1){
@@ -315,10 +333,17 @@ function drawShots(now){
         y: s.target.y + Math.sin(st.angle)*st.len*grow
       }));
 
-      // radiating strands
-      ctx.lineWidth = 1.6;
-      ctx.shadowColor = '#f4f2ea';
-      ctx.shadowBlur = 5;
+      // radiating strands — cheap glow via a wide faint pass + thin bright pass
+      ctx.strokeStyle = 'rgba(244,242,234,0.25)';
+      ctx.lineWidth = 4;
+      tips.forEach(p=>{
+        ctx.beginPath();
+        ctx.moveTo(s.target.x, s.target.y);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+      });
+      ctx.strokeStyle = '#f4f2ea';
+      ctx.lineWidth = 1.4;
       tips.forEach(p=>{
         ctx.beginPath();
         ctx.moveTo(s.target.x, s.target.y);
@@ -326,26 +351,42 @@ function drawShots(now){
         ctx.stroke();
       });
 
-      // connecting web rings at two radii
+      // connecting rings — slight inward sag between spokes, like real webbing under tension
       ctx.lineWidth = 1.1;
-      ctx.shadowBlur = 2;
-      [0.45, 0.85].forEach(frac=>{
+      ctx.strokeStyle = 'rgba(244,242,234,0.8)';
+      [0.4, 0.7, 0.95].forEach(frac=>{
         ctx.beginPath();
-        tips.forEach((st,i)=>{
-          const rp = {
-            x: s.target.x + Math.cos(s.strands[i].angle)*s.strands[i].len*grow*frac,
-            y: s.target.y + Math.sin(s.strands[i].angle)*s.strands[i].len*grow*frac
-          };
-          if(i===0) ctx.moveTo(rp.x, rp.y); else ctx.lineTo(rp.x, rp.y);
+        const ringPts = tips.map((p,i)=>({
+          x: s.target.x + Math.cos(s.strands[i].angle)*s.strands[i].len*grow*frac,
+          y: s.target.y + Math.sin(s.strands[i].angle)*s.strands[i].len*grow*frac
+        }));
+        ringPts.forEach((rp,i)=>{
+          if(i===0){ ctx.moveTo(rp.x, rp.y); return; }
+          const prev = ringPts[i-1];
+          const midX = (prev.x+rp.x)/2, midY = (prev.y+rp.y)/2;
+          const sagX = s.target.x + (midX-s.target.x)*0.92;
+          const sagY = s.target.y + (midY-s.target.y)*0.92;
+          ctx.quadraticCurveTo(sagX, sagY, rp.x, rp.y);
         });
-        ctx.closePath();
+        const first = ringPts[0], last = ringPts[ringPts.length-1];
+        const midX = (last.x+first.x)/2, midY = (last.y+first.y)/2;
+        const sagX = s.target.x + (midX-s.target.x)*0.92;
+        const sagY = s.target.y + (midY-s.target.y)*0.92;
+        ctx.quadraticCurveTo(sagX, sagY, first.x, first.y);
         ctx.stroke();
       });
 
-      // hub
+      // hub — soft radial glow instead of a flat dot
+      const grad = ctx.createRadialGradient(s.target.x, s.target.y, 0, s.target.x, s.target.y, 9);
+      grad.addColorStop(0, 'rgba(244,242,234,0.9)');
+      grad.addColorStop(1, 'rgba(244,242,234,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(s.target.x, s.target.y, 9, 0, Math.PI*2);
+      ctx.fill();
       ctx.fillStyle = '#f4f2ea';
       ctx.beginPath();
-      ctx.arc(s.target.x, s.target.y, 4, 0, Math.PI*2);
+      ctx.arc(s.target.x, s.target.y, 3.5, 0, Math.PI*2);
       ctx.fill();
 
       ctx.restore();
@@ -357,17 +398,27 @@ function drawShots(now){
 
 // ---------- main loop ----------
 let frameCount = 0, fpsTimer = performance.now(), fps = 0;
+let lastDetectTime = 0;
+const DETECT_INTERVAL_MS = 90; // ~11 detections/sec — single-hand tracking, tuned for low-end mobile
+let detecting = false;
 
 function loop(now){
   if(!running) return;
 
-  if(video.currentTime !== lastVideoTime){
+  // Detection runs on its own throttled cadence so it never has to
+  // happen every single paint — this is what keeps rendering smooth.
+  if(!detecting && now - lastDetectTime >= DETECT_INTERVAL_MS && video.currentTime !== lastVideoTime){
+    lastDetectTime = now;
     lastVideoTime = video.currentTime;
+    detecting = true;
     const result = handLandmarker.detectForVideo(video, now);
     processResult(result, now);
-  } else {
-    drawShots(now);
+    detecting = false;
   }
+
+  // Splat/projectile animation always redraws every frame,
+  // independent of how often detection runs.
+  drawShots(now);
 
   frameCount++;
   if(now - fpsTimer > 500){
@@ -397,7 +448,7 @@ function processResult(result, now){
     state.wasGesture = isGesture;
 
     if(risingEdge){
-      state.cooldownUntil = now + 550;
+      state.cooldownUntil = now + 320;
       const wristPt = toScreen(lm[0]);
       const tipPt = toScreen(lm[8]);
       const target = rayToEdge(wristPt, tipPt);
@@ -407,8 +458,6 @@ function processResult(result, now){
 
   sGesture.textContent = anyGesture ? "LOCKED" : "—";
   sGesture.classList.toggle('on', anyGesture);
-
-  drawShots(now);
 }
 </script>
 </body>
